@@ -16,21 +16,21 @@ package netbox
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
 )
 
 type Record struct {
-	Family   Family `json:"family"`
-	Address  string `json:"address"`
-	HostName string `json:"dns_name,omitempty"`
+	// Family   Family `json:"family"`
+	// Address  string `json:"address"`
+	// HostName string `json:"dns_name,omitempty"`
+	Value  string `json:"value"`
 }
 
-type Family struct {
-	Version int    `json:"value"`
-	Label   string `json:"label"`
-}
+// type Family struct {
+// 	Version int    `json:"value"`
+// 	Label   string `json:"label"`
+// }
 
 type RecordsList struct {
 	Records []Record `json:"results"`
@@ -55,20 +55,17 @@ func get(client *http.Client, url, token string) (*http.Response, error) {
 	return client.Do(req)
 }
 
-func (n *Netbox) query(host string, family int) ([]net.IP, error) {
+func (n *Netbox) query(host string, dns_type string) (RecordsList, error) {
 	var (
 		dns_name = strings.TrimSuffix(host, ".")
-		requrl   = fmt.Sprintf("%s/?dns_name=%s", n.Url, dns_name)
+		requrl   = fmt.Sprintf("%s/?type=%s&name=%s", n.Url, dns_type, dns_name)
 		records  RecordsList
 	)
-
-	// Initialise an empty slice of IP addresses
-	addresses := make([]net.IP, 0)
 
 	// do http request against NetBox instance
 	resp, err := get(n.Client, requrl, n.Token)
 	if err != nil {
-		return addresses, fmt.Errorf("Problem performing request: %w", err)
+		return records, fmt.Errorf("Problem performing request: %w", err)
 	}
 
 	// ensure body is closed once we are done
@@ -76,28 +73,19 @@ func (n *Netbox) query(host string, family int) ([]net.IP, error) {
 
 	// status code must be http.StatusOK
 	if resp.StatusCode != http.StatusOK {
-		return addresses, fmt.Errorf("Bad HTTP response code: %d", resp.StatusCode)
+		return records, fmt.Errorf("Bad HTTP response code: %d", resp.StatusCode)
 	}
 
 	// read and parse response body
 	decoder := json.NewDecoder(resp.Body)
 	if err := decoder.Decode(&records); err != nil {
-		return addresses, fmt.Errorf("Could not unmarshal response: %w", err)
+		return records, fmt.Errorf("Could not unmarshal response: %w", err)
 	}
 
 	// handle empty list of records
 	if len(records.Records) == 0 {
-		return addresses, nil
+		return records, nil
 	}
 
-	// grab returned address of specified address family
-	for _, r := range records.Records {
-		if r.Family.Version == family {
-			if addr := net.ParseIP(strings.Split(r.Address, "/")[0]); addr != nil {
-				addresses = append(addresses, addr)
-			}
-		}
-	}
-
-	return addresses, nil
+	return records, nil
 }
