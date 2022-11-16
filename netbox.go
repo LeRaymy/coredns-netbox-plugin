@@ -33,6 +33,7 @@ import (
 // friends to log.
 var log = clog.NewWithPlugin("netbox")
 
+// Structure for the plugin
 type Netbox struct {
 	Url    string
 	Token  string
@@ -49,14 +50,16 @@ const (
 	familyIP6 = 6
 )
 
-// ServeDNS implements the plugin.Handler interface
+// ServeDNS implements the plugin.Handler interface. This method is called for every dns request.
 func (n *Netbox) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
 	var (
-		ips []net.IP
 		err error
+		records RecordsList
 	)
 
 	state := request.Request{W: w, Req: r}
+	dns_type := GetDnsType(state.QType())
+	log.Info("Request received from " + GetOutboundIP().String() + " for " + state.QName() + " with type " + dns_type)
 
 	// only handle zones we are configured to respond for
 	zone := plugin.Zones(n.Zones).Matches(state.Name())
@@ -83,14 +86,30 @@ func (n *Netbox) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg)
 
 	answers := []dns.RR{}
 
-	// handle A and AAAA records only
+	records, err = n.query(strings.TrimSuffix(qname, "." + zone), dns_type)
+
+	// Handle according to DNS Type
 	switch state.QType() {
 	case dns.TypeA:
-		ips, err = n.query(strings.TrimRight(qname, "."), familyIP4)
-		answers = a(qname, uint32(n.TTL), ips)
+		answers = a(qname, uint32(n.TTL), records)
 	case dns.TypeAAAA:
-		ips, err = n.query(strings.TrimRight(qname, "."), familyIP6)
-		answers = aaaa(qname, uint32(n.TTL), ips)
+		answers = aaaa(qname, uint32(n.TTL), records)
+	case dns.TypeMX:
+		answers = mx(qname, uint32(n.TTL), records)
+	case dns.TypeTXT:
+		answers = txt(qname, uint32(n.TTL), records)
+	case dns.TypeCNAME:
+		answers = cname(qname, uint32(n.TTL), records)
+	case dns.TypeSOA:
+		answers = soa(qname, uint32(n.TTL), records)
+	case dns.TypeNS:
+		answers = ns(qname, uint32(n.TTL), records)
+	case dns.TypeSRV:
+		answers = srv(qname, uint32(n.TTL), records)
+	case dns.TypePTR:
+		answers = ptr(qname, uint32(n.TTL), records)
+	case dns.TypeSPF:
+		answers = spf(qname, uint32(n.TTL), records)
 	}
 
 	if len(answers) == 0 {
@@ -125,24 +144,133 @@ func (n *Netbox) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg)
 func (n *Netbox) Name() string { return "netbox" }
 
 // a takes a slice of net.IPs and returns a slice of A RRs.
-func a(zone string, ttl uint32, ips []net.IP) []dns.RR {
-	answers := make([]dns.RR, len(ips))
-	for i, ip := range ips {
+func a(zone string, ttl uint32, response RecordsList) []dns.RR {
+	answers := make([]dns.RR, len(response.Records))
+
+	for i, record := range response.Records {
 		r := new(dns.A)
 		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: ttl}
-		r.A = ip
+		// Parsing IP in IPv4 format
+		r.A = net.ParseIP(string(record.Value)).To4()
 		answers[i] = r
 	}
 	return answers
 }
 
 // aaaa takes a slice of net.IPs and returns a slice of AAAA RRs.
-func aaaa(zone string, ttl uint32, ips []net.IP) []dns.RR {
-	answers := make([]dns.RR, len(ips))
-	for i, ip := range ips {
+func aaaa(zone string, ttl uint32, response RecordsList) []dns.RR {
+	answers := make([]dns.RR, len(response.Records))
+
+	for i, record := range response.Records {
 		r := new(dns.AAAA)
 		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: ttl}
-		r.AAAA = ip
+		// Parsing IP in IPv6 format
+		r.AAAA = net.ParseIP(string(record.Value)).To16()
+		answers[i] = r
+	}
+	return answers
+}
+
+// mx takes a slice of net.IPs and returns a slice of MX RRs.
+func mx(zone string, ttl uint32, response RecordsList) []dns.RR {
+	answers := make([]dns.RR, len(response.Records))
+
+	for i, record := range response.Records {
+		r := new(dns.MX)
+		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypeMX, Class: dns.ClassINET, Ttl: ttl}
+		r.Mx = record.Value + "."
+		answers[i] = r
+	}
+	return answers
+}
+
+// txt takes a slice of net.IPs and returns a slice of TXT RRs.
+func txt(zone string, ttl uint32, response RecordsList) []dns.RR {
+	answers := make([]dns.RR, len(response.Records))
+
+	for i, record := range response.Records {
+		r := new(dns.TXT)
+		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: ttl}
+		r.Txt = []string{record.Value + "."}
+		answers[i] = r
+	}
+	return answers
+}
+
+// cname takes a slice of net.IPs and returns a slice of CNAME RRs.
+func cname(zone string, ttl uint32, response RecordsList) []dns.RR {
+	answers := make([]dns.RR, len(response.Records))
+
+	for i, record := range response.Records {
+		r := new(dns.CNAME)
+		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: ttl}
+		r.Target = record.Value + "."
+		answers[i] = r
+	}
+	return answers
+}
+
+// soa takes a slice of net.IPs and returns a slice of SOA RRs.
+func soa(zone string, ttl uint32, response RecordsList) []dns.RR {
+	answers := make([]dns.RR, len(response.Records))
+
+	for i, record := range response.Records {
+		r := new(dns.SOA)
+		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: ttl}
+		r.Ns = record.Value + "."
+		r.Mbox = record.Value + "."
+		answers[i] = r
+	}
+	return answers
+}
+
+// ns takes a slice of net.IPs and returns a slice of NS RRs.
+func ns(zone string, ttl uint32, response RecordsList) []dns.RR {
+	answers := make([]dns.RR, len(response.Records))
+
+	for i, record := range response.Records {
+		r := new(dns.NS)
+		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: ttl}
+		r.Ns = record.Value + "."
+		answers[i] = r
+	}
+	return answers
+}
+
+// srv takes a slice of net.IPs and returns a slice of SRV RRs.
+func srv(zone string, ttl uint32, response RecordsList) []dns.RR {
+	answers := make([]dns.RR, len(response.Records))
+
+	for i, record := range response.Records {
+		r := new(dns.SRV)
+		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypeSRV, Class: dns.ClassINET, Ttl: ttl}
+		r.Target = record.Value + "."
+		answers[i] = r
+	}
+	return answers
+}
+
+// ptr takes a slice of net.IPs and returns a slice of PTR RRs.
+func ptr(zone string, ttl uint32, response RecordsList) []dns.RR {
+	answers := make([]dns.RR, len(response.Records))
+
+	for i, record := range response.Records {
+		r := new(dns.PTR)
+		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypePTR, Class: dns.ClassINET, Ttl: ttl}
+		r.Ptr = record.Value + "."
+		answers[i] = r
+	}
+	return answers
+}
+
+// spf takes a slice of net.IPs and returns a slice of PTR RRs.
+func spf(zone string, ttl uint32, response RecordsList) []dns.RR {
+	answers := make([]dns.RR, len(response.Records))
+
+	for i, record := range response.Records {
+		r := new(dns.SPF)
+		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypePTR, Class: dns.ClassINET, Ttl: ttl}
+		r.Txt = []string{record.Value + "."}
 		answers[i] = r
 	}
 	return answers
@@ -159,4 +287,54 @@ func dnserror(rcode int, state request.Request, err error) (int, error) {
 
 	// return success as the rcode to signal we have written to the client.
 	return dns.RcodeSuccess, err
+}
+
+// This fonction returns the local IP address
+func GetOutboundIP() net.IP {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		log.Error(err)
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+
+	return localAddr.IP
+}
+
+// This fonction converts the uint16 to string
+func GetDnsType(qtype uint16) string {
+
+	switch qtype {
+	case dns.TypeA:
+		return "A"
+
+	case dns.TypeAAAA:
+		return "AAAA"
+
+	case dns.TypeMX:
+		return "MX"
+
+	case dns.TypeTXT:
+		return "TXT"
+
+	case dns.TypeCNAME:
+		return "CNAME"
+
+	case dns.TypeSOA:
+		return "SOA"
+
+	case dns.TypeNS:
+		return "NS"
+
+	case dns.TypeSRV:
+		return "SRV"
+
+	case dns.TypePTR:
+		return "PTR"
+
+	case dns.TypeSPF:
+		return "SPF"
+	}
+	return ""
 }
