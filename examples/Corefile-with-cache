@@ -4,7 +4,7 @@
   debug
   netbox {
     token 0123456789abcdef0123456789abcdef01234567
-    url http://localhost:8000/api/ipam/ip-addresses
+    url http://localhost:8000/api/plugins/netbox-dns/records
   }
   cache 300  # see docs for the cache Plugin about config
 }

@@ -15,7 +15,7 @@
 #  debug
 #  netbox {
 #    token 0123456789abcdef0123456789abcdef01234567
-#    url http://localhost:8000/api/ipam/ip-addresses
+#    url http://localhost:8000/api/plugins/netbox-dns/records
 #  }
 #  cache
 #}
@@ -25,7 +25,7 @@
 # . {
 #   netbox example.org {
 #     token 0123456789abcdef0123456789abcdef01234567
-#     url http://localhost:8000/api/ipam/ip-addresses
+#     url http://localhost:8000/api/plugins/netbox-dns/records
 #   } 
 # }
 #
@@ -35,7 +35,7 @@
 # . {
 #   netbox example.org example.net {
 #     token 0123456789abcdef0123456789abcdef01234567
-#     url http://localhost:8000/api/ipam/ip-addresses
+#     url http://localhost:8000/api/plugins/netbox-dns/records
 #   } 
 # }
 #
@@ -49,7 +49,7 @@
 # . {
 #   netbox {
 #     token 0123456789abcdef0123456789abcdef01234567
-#     url http://localhost:8000/api/ipam/ip-addresses
+#     url http://localhost:8000/api/plugins/netbox-dns/records
 #     ttl 1800s
 #     fallthrough
 #   }
