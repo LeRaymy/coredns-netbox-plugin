@@ -16,7 +16,6 @@ package netbox
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
 )
