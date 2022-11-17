@@ -63,22 +63,12 @@ func (n *Netbox) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg)
 
 	// only handle zones we are configured to respond for
 	zone := plugin.Zones(n.Zones).Matches(state.Name())
+
 	if zone == "" {
 		return plugin.NextOrFailure(n.Name(), n.Next, ctx, w, r)
 	}
 
 	qname := state.Name()
-
-	// check record type here and bail out if not A or AAAA
-	if state.QType() != dns.TypeA && state.QType() != dns.TypeAAAA {
-		// always fallthrough if configured
-		if n.Fall.Through(qname) {
-			return plugin.NextOrFailure(n.Name(), n.Next, ctx, w, r)
-		}
-
-		// otherwise return SERVFAIL here without fallthrough
-		return dnserror(dns.RcodeServerFailure, state, err)
-	}
 
 	// Export metric with the server label set to the current
 	// server handling the request.
@@ -87,6 +77,7 @@ func (n *Netbox) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg)
 	answers := []dns.RR{}
 
 	records, err = n.query(strings.TrimSuffix(qname, "." + zone), dns_type)
+	log.Info(state.QType())
 
 	// Handle according to DNS Type
 	switch state.QType() {
