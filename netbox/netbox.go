@@ -75,14 +75,32 @@ func (n *Netbox) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg)
 	requestCount.WithLabelValues(metrics.WithServer(ctx)).Inc()
 
 	answers := []dns.RR{}
+	// answers := []allDnsTypes{}
 
 	records, err = n.query(strings.TrimSuffix(qname, "." + zone), dns_type)
-	log.Info(state.QType())
 
 	// Handle according to DNS Type
 	switch state.QType() {
 	case dns.TypeA:
-		answers = a(qname, uint32(n.TTL), records)
+		for count := 0; count < 50; count++ {
+			if len(records.Records) > 0 {
+				log.Info("Trying A")
+				records, err = n.query(strings.TrimSuffix(qname, "." + zone), dns_type)
+				answers = append(answers, a(qname, uint32(n.TTL), records)...)
+				break
+			} else if count < 50{
+				// Try CNAME
+				log.Info("Trying CNAME")
+				records, err = n.query(strings.TrimSuffix(qname, "." + zone), "CNAME")
+				answers = append(answers, cname(qname, uint32(n.TTL), records, zone)...)
+				qname = strings.Split(answers[count].String(), "\t")[4]
+				log.Info(qname)
+			} else {
+				log.Error("Fail to find " + state.QName() + " in less than 50 occurences ...")
+			}
+			
+		}
+
 	case dns.TypeAAAA:
 		answers = aaaa(qname, uint32(n.TTL), records)
 	case dns.TypeMX:
@@ -90,7 +108,7 @@ func (n *Netbox) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg)
 	case dns.TypeTXT:
 		answers = txt(qname, uint32(n.TTL), records)
 	case dns.TypeCNAME:
-		answers = cname(qname, uint32(n.TTL), records)
+		answers = cname(qname, uint32(n.TTL), records, zone)
 	case dns.TypeSOA:
 		answers = soa(qname, uint32(n.TTL), records)
 	case dns.TypeNS:
@@ -135,12 +153,12 @@ func (n *Netbox) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg)
 func (n *Netbox) Name() string { return "netbox" }
 
 // a takes a slice of net.IPs and returns a slice of A RRs.
-func a(zone string, ttl uint32, response RecordsList) []dns.RR {
+func a(qname string, ttl uint32, response RecordsList) []dns.RR {
 	answers := make([]dns.RR, len(response.Records))
 
 	for i, record := range response.Records {
 		r := new(dns.A)
-		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: ttl}
+		r.Hdr = dns.RR_Header{Name: qname, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: ttl}
 		// Parsing IP in IPv4 format
 		r.A = net.ParseIP(string(record.Value)).To4()
 		answers[i] = r
@@ -149,12 +167,12 @@ func a(zone string, ttl uint32, response RecordsList) []dns.RR {
 }
 
 // aaaa takes a slice of net.IPs and returns a slice of AAAA RRs.
-func aaaa(zone string, ttl uint32, response RecordsList) []dns.RR {
+func aaaa(qname string, ttl uint32, response RecordsList) []dns.RR {
 	answers := make([]dns.RR, len(response.Records))
 
 	for i, record := range response.Records {
 		r := new(dns.AAAA)
-		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: ttl}
+		r.Hdr = dns.RR_Header{Name: qname, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: ttl}
 		// Parsing IP in IPv6 format
 		r.AAAA = net.ParseIP(string(record.Value)).To16()
 		answers[i] = r
@@ -163,12 +181,12 @@ func aaaa(zone string, ttl uint32, response RecordsList) []dns.RR {
 }
 
 // mx takes a slice of net.IPs and returns a slice of MX RRs.
-func mx(zone string, ttl uint32, response RecordsList) []dns.RR {
+func mx(qname string, ttl uint32, response RecordsList) []dns.RR {
 	answers := make([]dns.RR, len(response.Records))
 
 	for i, record := range response.Records {
 		r := new(dns.MX)
-		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypeMX, Class: dns.ClassINET, Ttl: ttl}
+		r.Hdr = dns.RR_Header{Name: qname, Rrtype: dns.TypeMX, Class: dns.ClassINET, Ttl: ttl}
 		r.Mx = record.Value + "."
 		answers[i] = r
 	}
@@ -176,12 +194,12 @@ func mx(zone string, ttl uint32, response RecordsList) []dns.RR {
 }
 
 // txt takes a slice of net.IPs and returns a slice of TXT RRs.
-func txt(zone string, ttl uint32, response RecordsList) []dns.RR {
+func txt(qname string, ttl uint32, response RecordsList) []dns.RR {
 	answers := make([]dns.RR, len(response.Records))
 
 	for i, record := range response.Records {
 		r := new(dns.TXT)
-		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: ttl}
+		r.Hdr = dns.RR_Header{Name: qname, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: ttl}
 		r.Txt = []string{record.Value + "."}
 		answers[i] = r
 	}
@@ -189,25 +207,25 @@ func txt(zone string, ttl uint32, response RecordsList) []dns.RR {
 }
 
 // cname takes a slice of net.IPs and returns a slice of CNAME RRs.
-func cname(zone string, ttl uint32, response RecordsList) []dns.RR {
+func cname(qname string, ttl uint32, response RecordsList, zone string) []dns.RR {
 	answers := make([]dns.RR, len(response.Records))
 
 	for i, record := range response.Records {
 		r := new(dns.CNAME)
-		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: ttl}
-		r.Target = record.Value + "."
+		r.Hdr = dns.RR_Header{Name: qname, Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: ttl}
+		r.Target = record.Value + "." + zone
 		answers[i] = r
 	}
 	return answers
 }
 
 // soa takes a slice of net.IPs and returns a slice of SOA RRs.
-func soa(zone string, ttl uint32, response RecordsList) []dns.RR {
+func soa(qname string, ttl uint32, response RecordsList) []dns.RR {
 	answers := make([]dns.RR, len(response.Records))
 
 	for i, record := range response.Records {
 		r := new(dns.SOA)
-		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: ttl}
+		r.Hdr = dns.RR_Header{Name: qname, Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: ttl}
 		r.Ns = record.Value + "."
 		r.Mbox = record.Value + "."
 		answers[i] = r
@@ -216,12 +234,12 @@ func soa(zone string, ttl uint32, response RecordsList) []dns.RR {
 }
 
 // ns takes a slice of net.IPs and returns a slice of NS RRs.
-func ns(zone string, ttl uint32, response RecordsList) []dns.RR {
+func ns(qname string, ttl uint32, response RecordsList) []dns.RR {
 	answers := make([]dns.RR, len(response.Records))
 
 	for i, record := range response.Records {
 		r := new(dns.NS)
-		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: ttl}
+		r.Hdr = dns.RR_Header{Name: qname, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: ttl}
 		r.Ns = record.Value + "."
 		answers[i] = r
 	}
@@ -229,12 +247,12 @@ func ns(zone string, ttl uint32, response RecordsList) []dns.RR {
 }
 
 // srv takes a slice of net.IPs and returns a slice of SRV RRs.
-func srv(zone string, ttl uint32, response RecordsList) []dns.RR {
+func srv(qname string, ttl uint32, response RecordsList) []dns.RR {
 	answers := make([]dns.RR, len(response.Records))
 
 	for i, record := range response.Records {
 		r := new(dns.SRV)
-		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypeSRV, Class: dns.ClassINET, Ttl: ttl}
+		r.Hdr = dns.RR_Header{Name: qname, Rrtype: dns.TypeSRV, Class: dns.ClassINET, Ttl: ttl}
 		r.Target = record.Value + "."
 		answers[i] = r
 	}
@@ -242,12 +260,12 @@ func srv(zone string, ttl uint32, response RecordsList) []dns.RR {
 }
 
 // ptr takes a slice of net.IPs and returns a slice of PTR RRs.
-func ptr(zone string, ttl uint32, response RecordsList) []dns.RR {
+func ptr(qname string, ttl uint32, response RecordsList) []dns.RR {
 	answers := make([]dns.RR, len(response.Records))
 
 	for i, record := range response.Records {
 		r := new(dns.PTR)
-		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypePTR, Class: dns.ClassINET, Ttl: ttl}
+		r.Hdr = dns.RR_Header{Name: qname, Rrtype: dns.TypePTR, Class: dns.ClassINET, Ttl: ttl}
 		r.Ptr = record.Value + "."
 		answers[i] = r
 	}
@@ -255,12 +273,12 @@ func ptr(zone string, ttl uint32, response RecordsList) []dns.RR {
 }
 
 // spf takes a slice of net.IPs and returns a slice of PTR RRs.
-func spf(zone string, ttl uint32, response RecordsList) []dns.RR {
+func spf(qname string, ttl uint32, response RecordsList) []dns.RR {
 	answers := make([]dns.RR, len(response.Records))
 
 	for i, record := range response.Records {
 		r := new(dns.SPF)
-		r.Hdr = dns.RR_Header{Name: zone, Rrtype: dns.TypePTR, Class: dns.ClassINET, Ttl: ttl}
+		r.Hdr = dns.RR_Header{Name: qname, Rrtype: dns.TypePTR, Class: dns.ClassINET, Ttl: ttl}
 		r.Txt = []string{record.Value + "."}
 		answers[i] = r
 	}
